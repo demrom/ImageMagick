@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PREFIX=$PWD
+PKG_CONFIG_TOOL=$(command -v pkgconf)
 BUILD_TRIPLE=$(sh config/config.guess)
 IOS_SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
 SIM_SDKROOT=$(xcrun --sdk iphonesimulator --show-sdk-path)
@@ -9,7 +10,8 @@ SIM_SDKROOT=$(xcrun --sdk iphonesimulator --show-sdk-path)
 # 1) build for iOS:
 # 1a) configure with all the right flags:
 if [ -f Makefile ]; then make distclean; fi
-env CC=clang CXX=clang++ \
+env PKG_CONFIG="$PKG_CONFIG_TOOL --static" PKG_CONFIG_LIBDIR="$PREFIX/Frameworks_iphoneos/lib/pkgconfig" PKG_CONFIG_PATH= \
+    CC=clang CXX=clang++ \
 	CPPFLAGS="-arch arm64 -miphoneos-version-min=14.0 -isysroot $IOS_SDKROOT -I$PREFIX/Frameworks_iphoneos/include -F$PREFIX/Frameworks_iphoneos " \
 	CFLAGS="-arch arm64 -miphoneos-version-min=14.0 -isysroot $IOS_SDKROOT -I$PREFIX/Frameworks_iphoneos/include -F$PREFIX/Frameworks_iphoneos " \
 	CXXFLAGS="-arch arm64 -miphoneos-version-min=14.0 -isysroot $IOS_SDKROOT -I$PREFIX/Frameworks_iphoneos/include " \
@@ -19,6 +21,13 @@ env CC=clang CXX=clang++ \
 	PLATFORM=iphoneos \
 	./configure --disable-shared \
 	--host arm-apple-darwin --build "$BUILD_TRIPLE" --with-quantum-depth=8 --disable-installed --without-modules --disable-hdri --with-lzma=no --with-fftw=no --with-pango=no --with-openexr=no --with-gslib=no --with-dps=no --with-png=yes  PNG_CFLAGS="-F$PREFIX/Frameworks_iphoneos" PNG_LIBS="-framework libpng"  PSDelegateDefault="no" --with-freetype FREETYPE_LIBS="-framework freetype"  FREETYPE_CFLAGS="-F$PREFIX/Frameworks_iphoneos" ac_cv_func_fork=no ac_cv_func_fork_works=no ac_cv_func_vfork=no ac_cv_func_vfork_works=no ac_cv_func_getentropy=no
+
+for delegate in JPEG PNG TIFF FREETYPE ZLIB; do
+    grep -q "^#define MAGICKCORE_${delegate}_DELEGATE 1$" MagickCore/magick-baseconfig.h || {
+        echo "Missing required iOS delegate: $delegate" >&2
+        exit 1
+    }
+done
 
 # 1b) make:
 make -j3
@@ -39,16 +48,24 @@ install_name_tool -id @rpath/$binary.framework/$binary   ${FRAMEWORK_DIR}/$binar
 # 2) build for iOS simulator:
 # 2a) configure with all the right flags:
 make distclean
-env CC=clang CXX=clang++ \
-	CPPFLAGS="-arch x86_64 -mios-simulator-version-min=14.0 -isysroot $SIM_SDKROOT -I$PREFIX/Frameworks_iphonesimulator/include -F$PREFIX/Frameworks_iphonesimulator " \
-	CFLAGS="-arch x86_64 -mios-simulator-version-min=14.0 -isysroot $SIM_SDKROOT -I$PREFIX/Frameworks_iphonesimulator/include -F$PREFIX/Frameworks_iphonesimulator " \
-	CXXFLAGS="-arch x86_64 -mios-simulator-version-min=14.0 -isysroot $SIM_SDKROOT -I$PREFIX/Frameworks_iphonesimulator/include " \
-	LDFLAGS="-dynamiclib -arch x86_64 -mios-simulator-version-min=14.0 -isysroot $SIM_SDKROOT -F$PREFIX/Frameworks_iphonesimulator -framework ios_system -L$PREFIX/Frameworks_iphonesimulator/lib -lz" \
+env PKG_CONFIG="$PKG_CONFIG_TOOL --static" PKG_CONFIG_LIBDIR="$PREFIX/Frameworks_iphonesimulator/lib/pkgconfig" PKG_CONFIG_PATH= \
+    CC=clang CPP="clang -E" CXX=clang++ CXXCPP="clang++ -E" \
+	CPPFLAGS="-mios-simulator-version-min=14.0 -isysroot $SIM_SDKROOT -I$PREFIX/Frameworks_iphonesimulator/include -F$PREFIX/Frameworks_iphonesimulator " \
+	CFLAGS="-arch arm64 -arch x86_64 -mios-simulator-version-min=14.0 -isysroot $SIM_SDKROOT -I$PREFIX/Frameworks_iphonesimulator/include -F$PREFIX/Frameworks_iphonesimulator " \
+	CXXFLAGS="-arch arm64 -arch x86_64 -mios-simulator-version-min=14.0 -isysroot $SIM_SDKROOT -I$PREFIX/Frameworks_iphonesimulator/include " \
+	LDFLAGS="-dynamiclib -arch arm64 -arch x86_64 -mios-simulator-version-min=14.0 -isysroot $SIM_SDKROOT -F$PREFIX/Frameworks_iphonesimulator -framework ios_system -L$PREFIX/Frameworks_iphonesimulator/lib -lz" \
 	LDSHARED="clang -v -undefined error -dynamiclib -isysroot $SIM_SDKROOT -F$PREFIX/Frameworks_iphonesimulator -framework ios_system -L$PREFIX/Frameworks_iphonesimulator/lib" \
 	PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
 	PLATFORM=iphonesimulator \
 	./configure --disable-shared \
 	--host x86_64-apple-darwin --build "$BUILD_TRIPLE" --with-quantum-depth=8 --disable-installed --without-modules --disable-hdri --with-lzma=no --with-fftw=no --with-pango=no --with-openexr=no --with-gslib=no --with-dps=no --with-png=yes  PNG_CFLAGS="-F$PREFIX/Frameworks_iphonesimulator" PNG_LIBS="-framework libpng"  PSDelegateDefault="no" --with-freetype FREETYPE_LIBS="-framework freetype"  FREETYPE_CFLAGS="-F$PREFIX/Frameworks_iphonesimulator" ac_cv_func_fork=no ac_cv_func_fork_works=no ac_cv_func_vfork=no ac_cv_func_vfork_works=no ac_cv_func_getentropy=no
+
+for delegate in JPEG PNG TIFF FREETYPE ZLIB; do
+    grep -q "^#define MAGICKCORE_${delegate}_DELEGATE 1$" MagickCore/magick-baseconfig.h || {
+        echo "Missing required Simulator delegate: $delegate" >&2
+        exit 1
+    }
+done
 
 # 2b) make:
 make -j3
